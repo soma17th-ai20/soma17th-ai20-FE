@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useRouter } from 'next/navigation'
+import { addInterest, registerUser, saveSession } from '../_lib/api'
 
 const CATEGORIES = [
   { label: '학사/수업', icon: '📚', color: 'text-violet-600', bg: 'bg-violet-50', border: 'border-violet-100', tags: ['수강신청', '성적', '졸업요건', '복학', '휴학', '전과', '부전공', '학점교류'] },
@@ -22,6 +23,7 @@ export default function InterestsPage() {
   const [customInput, setCustomInput] = useState('')
   const [customTags, setCustomTags] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   function toggleTag(tag: string) {
     setSelected(prev => {
@@ -51,9 +53,41 @@ export default function InterestsPage() {
   async function handleSubmit() {
     if (selected.size === 0 || loading) return
     setLoading(true)
-    localStorage.setItem('interests', JSON.stringify(Array.from(selected)))
-    await new Promise(r => setTimeout(r, 500))
-    router.push('/settings')
+    setError(null)
+
+    const tags = Array.from(selected)
+    localStorage.setItem('interests', JSON.stringify(tags))
+
+    // /signup에서 LS["signup"]에 저장된 email을 꺼냄
+    const signupRaw = localStorage.getItem('signup')
+    if (!signupRaw) {
+      setError('회원가입 정보가 없습니다. 처음부터 다시 진행해주세요.')
+      setLoading(false)
+      router.push('/signup')
+      return
+    }
+    const { email } = JSON.parse(signupRaw) as { email?: string }
+    if (!email) {
+      setError('이메일이 없습니다.')
+      setLoading(false)
+      return
+    }
+
+    try {
+      // 1) 첫 번째 관심사로 유저 생성 (멱등 — 같은 email 재호출 시 기존 user_id 반환)
+      const reg = await registerUser(email, tags[0])
+      saveSession(reg.user_id, reg.email)
+
+      // 2) 나머지 관심사들은 별도 endpoint로
+      for (const tag of tags.slice(1)) {
+        await addInterest(reg.user_id, tag)
+      }
+
+      router.push('/settings')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '저장 실패')
+      setLoading(false)
+    }
   }
 
   return (
@@ -211,6 +245,9 @@ export default function InterestsPage() {
           >
             {loading ? '저장 중...' : selected.size > 0 ? `완료 — ${selected.size}개 선택` : '관심사를 선택해 주세요'}
           </motion.button>
+          {error && (
+            <p className="mt-3 text-center text-xs font-medium text-red-500">{error}</p>
+          )}
         </div>
       </motion.div>
     </div>

@@ -1,9 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-
-type Frequency = 'realtime' | 'daily' | 'weekly'
+import { getEmail, getSettings, getUserId, updateSettings, type Frequency } from '../_lib/api'
 
 const FREQUENCIES: { value: Frequency; label: string; desc: string; icon: string; gradient: string }[] = [
   { value: 'realtime', label: '실시간', desc: '공지가 올라오는 즉시 알림', icon: '⚡', gradient: 'from-amber-400 to-orange-400' },
@@ -16,15 +15,47 @@ export default function SettingsPage() {
   const [frequency, setFrequency] = useState<Frequency>('daily')
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [userId, setUserId] = useState<number | null>(null)
+
+  useEffect(() => {
+    const uid = getUserId()
+    setUserId(uid)
+    if (uid == null) {
+      // 세션 없으면 LS의 signup 이메일이라도 채워두기
+      setEmail(getEmail() ?? '')
+      return
+    }
+    getSettings(uid)
+      .then(s => {
+        setEmail(s.email)
+        setFrequency(s.notification_frequency)
+      })
+      .catch(e => setError(e instanceof Error ? e.message : '설정 로드 실패'))
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (userId == null) {
+      setError('회원가입을 먼저 완료해주세요.')
+      return
+    }
     setLoading(true)
     setSaved(false)
-    await new Promise(r => setTimeout(r, 500))
-    // TODO: PATCH /api/users/notification-settings
-    setSaved(true)
-    setLoading(false)
+    setError(null)
+    try {
+      const updated = await updateSettings(userId, {
+        email,
+        notification_frequency: frequency,
+      })
+      setEmail(updated.email)
+      setFrequency(updated.notification_frequency)
+      setSaved(true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '저장 실패')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -146,6 +177,10 @@ export default function SettingsPage() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {error && (
+          <p className="text-center text-xs font-medium text-red-500">{error}</p>
+        )}
       </form>
     </div>
   )

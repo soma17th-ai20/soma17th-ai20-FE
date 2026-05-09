@@ -1,9 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { addInterest, getUserId, listInterests, removeInterest } from '../_lib/api'
 
-const INITIAL_KEYWORDS = ['장학금', '졸업요건', '인턴십', '대학원']
 const SUGGESTIONS = ['등록금', '수강신청', '현장실습', '교환학생', '복학', '휴학', '취업특강', '공모전', '봉사활동', '기숙사']
 
 const KEYWORD_COLORS = [
@@ -16,23 +16,55 @@ const KEYWORD_COLORS = [
 ]
 
 export default function KeywordsPage() {
-  const [keywords, setKeywords] = useState<string[]>(INITIAL_KEYWORDS)
+  const [keywords, setKeywords] = useState<string[]>([])
   const [input, setInput] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [userId, setUserId] = useState<number | null>(null)
 
-  function addKeyword(kw?: string) {
+  useEffect(() => {
+    const uid = getUserId()
+    setUserId(uid)
+    if (uid == null) {
+      setError('회원가입을 먼저 완료해주세요.')
+      return
+    }
+    listInterests(uid)
+      .then(r => setKeywords(r.interests))
+      .catch(e => setError(e instanceof Error ? e.message : '불러오기 실패'))
+  }, [])
+
+  async function addKeyword(kw?: string) {
     const trimmed = (kw ?? input).trim()
-    if (!trimmed) return
+    if (!trimmed || loading) return
+    if (userId == null) { setError('회원가입을 먼저 완료해주세요.'); return }
     if (keywords.includes(trimmed)) { setError('이미 추가된 키워드예요'); return }
     if (keywords.length >= 20) { setError('최대 20개까지 추가할 수 있어요'); return }
-    setKeywords(prev => [...prev, trimmed])
-    setInput('')
+    setLoading(true)
     setError('')
+    try {
+      const r = await addInterest(userId, trimmed)
+      if (!r.duplicate) setKeywords(prev => [...prev, trimmed])
+      setInput('')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '추가 실패')
+    } finally {
+      setLoading(false)
+    }
   }
 
-  function removeKeyword(kw: string) {
-    setKeywords(prev => prev.filter(k => k !== kw))
+  async function removeKeyword(kw: string) {
+    if (userId == null || loading) return
+    setLoading(true)
     setError('')
+    try {
+      await removeInterest(userId, kw)
+      setKeywords(prev => prev.filter(k => k !== kw))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '삭제 실패')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
