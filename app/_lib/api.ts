@@ -113,10 +113,25 @@ async function request<T>(
 
 // ───── 유저 ─────────────────────────────────────────────────────────────
 
+export interface LoginOut {
+  user_id: number
+  email: string
+  notification_frequency: Frequency
+  interest_count: number
+  created_at: string
+}
+
 export function registerUser(email: string, interestText: string) {
   return request<UserRegisterOut>('/api/users', {
     method: 'POST',
     body: JSON.stringify({ email, interest_text: interestText }),
+  })
+}
+
+export function login(email: string) {
+  return request<LoginOut>('/api/users/login', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
   })
 }
 

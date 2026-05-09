@@ -1,7 +1,9 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
+import { clearSession, getEmail, getUserId } from '../_lib/api'
 
 const links = [
   { href: '/feed', label: '공지 피드' },
@@ -11,6 +13,21 @@ const links = [
 
 export default function Navbar() {
   const pathname = usePathname()
+  const router = useRouter()
+  // null = 아직 hydration 전 (서버/첫 클라이언트 렌더 일치를 위해)
+  const [session, setSession] = useState<{ email: string } | null | undefined>(undefined)
+
+  useEffect(() => {
+    const uid = getUserId()
+    const email = getEmail()
+    setSession(uid && email ? { email } : null)
+  }, [pathname])
+
+  function handleLogout() {
+    clearSession()
+    setSession(null)
+    router.push('/')
+  }
 
   return (
     <header className="sticky top-0 z-50 border-b border-indigo-100/60 bg-white/70 backdrop-blur-xl">
@@ -41,12 +58,41 @@ export default function Navbar() {
               </Link>
             )
           })}
-          <Link
-            href="/signup"
-            className="ml-2 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-500 px-4 py-1.5 text-sm font-semibold text-white shadow-sm shadow-indigo-200 hover:opacity-90 transition-opacity"
-          >
-            시작하기
-          </Link>
+
+          {session === undefined ? (
+            // hydration 전: 자리만 차지
+            <span className="ml-2 h-7 w-20" />
+          ) : session ? (
+            <div className="ml-2 flex items-center gap-2">
+              <span
+                title={session.email}
+                className="hidden max-w-[180px] truncate rounded-lg bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-600 sm:inline"
+              >
+                {session.email}
+              </span>
+              <button
+                onClick={handleLogout}
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-600 hover:border-red-200 hover:bg-red-50 hover:text-red-600 transition-all"
+              >
+                로그아웃
+              </button>
+            </div>
+          ) : (
+            <div className="ml-2 flex items-center gap-1">
+              <Link
+                href="/login"
+                className="rounded-lg px-3.5 py-1.5 text-sm font-medium text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800 transition-all"
+              >
+                로그인
+              </Link>
+              <Link
+                href="/signup"
+                className="rounded-lg bg-gradient-to-r from-indigo-600 to-violet-500 px-4 py-1.5 text-sm font-semibold text-white shadow-sm shadow-indigo-200 hover:opacity-90 transition-opacity"
+              >
+                시작하기
+              </Link>
+            </div>
+          )}
         </nav>
       </div>
     </header>
