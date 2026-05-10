@@ -1,7 +1,9 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { useRouter } from 'next/navigation'
+import { isLoggedIn, isOnboarded, setOnboarded } from '../_lib/auth'
 
 type Frequency = 'realtime' | 'daily' | 'weekly'
 
@@ -12,10 +14,15 @@ const FREQUENCIES: { value: Frequency; label: string; desc: string; icon: string
 ]
 
 export default function SettingsPage() {
+  const router = useRouter()
   const [email, setEmail] = useState('')
   const [frequency, setFrequency] = useState<Frequency>('daily')
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!isLoggedIn()) router.replace('/login')
+  }, [router])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -23,8 +30,14 @@ export default function SettingsPage() {
     setSaved(false)
     await new Promise(r => setTimeout(r, 500))
     // TODO: PATCH /api/users/notification-settings
+    const firstTime = !isOnboarded()
+    setOnboarded()
     setSaved(true)
     setLoading(false)
+    if (firstTime) {
+      await new Promise(r => setTimeout(r, 800))
+      router.push('/feed')
+    }
   }
 
   return (
