@@ -1,177 +1,244 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import {
-  getUserId,
-  listMyNotifications,
-  setFeedback as apiSetFeedback,
-  type Feedback,
-  type NotificationItem,
-} from '../_lib/api'
+import { useRouter } from 'next/navigation'
+import { isLoggedIn, getUserId } from '../_lib/auth'
 
-interface Notice {
+type FeedbackValue = 'like' | 'dislike' | null
+
+interface NotificationItem {
   notification_id: number
   notice_id: number
   title: string
-  summary: string
-  category: string
-  deadline: string | null
   url: string
-  feedback: Feedback
+  source_id: string
+  posted_at: string | null
+  summary: string
+  queued_at: string | null
+  sent_at: string | null
+  status: string
+  feedback: FeedbackValue
 }
 
-const CATEGORY_STYLE: Record<string, { badge: string; bar: string; icon: string }> = {
-  장학금:    { badge: 'bg-amber-100 text-amber-700 border-amber-200',   bar: 'bg-amber-400',   icon: '🎓' },
-  학사:      { badge: 'bg-indigo-100 text-indigo-700 border-indigo-200', bar: 'bg-indigo-400',  icon: '📚' },
-  '취업/인턴': { badge: 'bg-emerald-100 text-emerald-700 border-emerald-200', bar: 'bg-emerald-400', icon: '💼' },
-  시설:      { badge: 'bg-zinc-100 text-zinc-600 border-zinc-200',      bar: 'bg-zinc-400',    icon: '🏫' },
-  대학원:    { badge: 'bg-violet-100 text-violet-700 border-violet-200', bar: 'bg-violet-400',  icon: '🔬' },
-  공지:      { badge: 'bg-zinc-100 text-zinc-600 border-zinc-200',      bar: 'bg-zinc-300',    icon: '📄' },
+interface NotificationListOut {
+  user_id: number
+  items: NotificationItem[]
 }
 
-// source_id를 한글 카테고리로 매핑
-function categoryFromSource(sourceId: string): string {
-  if (sourceId.includes('cse') || sourceId.includes('cba') || sourceId.includes('snu')) return '학사'
-  if (sourceId.includes('saramin') || sourceId.includes('jobkorea') || sourceId.includes('recruit')) return '취업/인턴'
-  return '공지'
+const HOURS_OPTIONS = [
+  { label: '24시간', value: 24 },
+  { label: '3일', value: 72 },
+  { label: '1주일', value: 168 },
+]
+
+const SOURCE_STYLE: Record<string, { badge: string; bar: string; icon: string; label: string }> = {
+  // school
+  snu_cse_notice:    { badge: 'bg-indigo-100 text-indigo-700 border-indigo-200',   bar: 'bg-indigo-400',  icon: '📚', label: '서울대 CSE 공지' },
+  snu_cba_notice:    { badge: 'bg-violet-100 text-violet-700 border-violet-200',   bar: 'bg-violet-400',  icon: '🏛️', label: '서울대 경영대 공지' },
+  // job
+  saramin_hot100:    { badge: 'bg-emerald-100 text-emerald-700 border-emerald-200', bar: 'bg-emerald-400', icon: '💼', label: '사람인 HOT100' },
+  naver_recruit:     { badge: 'bg-green-100 text-green-700 border-green-200',      bar: 'bg-green-500',   icon: '🟢', label: '네이버 채용' },
+  jobkorea_ai:       { badge: 'bg-sky-100 text-sky-700 border-sky-200',            bar: 'bg-sky-400',     icon: '🤖', label: '잡코리아 AI 채용' },
+  // community
+  naver_cafe_notice: { badge: 'bg-amber-100 text-amber-700 border-amber-200',      bar: 'bg-amber-400',   icon: '☕', label: '소마 카페' },
 }
 
-function adapt(item: NotificationItem): Notice {
-  return {
-    notification_id: item.notification_id,
-    notice_id: item.notice_id,
-    title: item.title,
-    summary: item.summary,
-    category: categoryFromSource(item.source_id),
-    deadline: null, // 백엔드에 마감일 추출 미구현 — null
-    url: item.url,
-    feedback: item.feedback,
-  }
+const FALLBACK_COLORS = [
+  { badge: 'bg-indigo-100 text-indigo-700 border-indigo-200',   bar: 'bg-indigo-400' },
+  { badge: 'bg-teal-100 text-teal-700 border-teal-200',         bar: 'bg-teal-400' },
+  { badge: 'bg-orange-100 text-orange-700 border-orange-200',   bar: 'bg-orange-400' },
+  { badge: 'bg-rose-100 text-rose-700 border-rose-200',         bar: 'bg-rose-400' },
+]
+
+function getSourceStyle(sourceId: string) {
+  if (SOURCE_STYLE[sourceId]) return SOURCE_STYLE[sourceId]
+  const color = FALLBACK_COLORS[sourceId.length % FALLBACK_COLORS.length]
+  return { ...color, icon: '📄', label: sourceId }
+}
+
+function formatPostedAt(postedAt: string | null): string | null {
+  if (!postedAt) return null
+  const d = new Date(postedAt)
+  if (isNaN(d.getTime())) return null
+  return d.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric' })
 }
 
 export default function FeedPage() {
-  const [items, setItems] = useState<Notice[]>([])
+  const router = useRouter()
+  const [hours, setHours] = useState(24)
+  const [items, setItems] = useState<NotificationItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [needsLogin, setNeedsLogin] = useState(false)
+  const [error, setError] = useState('')
+  const [feedbacks, setFeedbacks] = useState<Record<number, FeedbackValue>>({})
 
-  useEffect(() => {
-    const uid = getUserId()
-    if (uid == null) {
-      setNeedsLogin(true)
+  const fetchNotices = useCallback(async (uid: string, h: number) => {
+    setLoading(true)
+    setError('')
+    try {
+      const res = await fetch(`/api/users/${uid}/notifications?hours=${h}`)
+      if (!res.ok) throw new Error('fetch failed')
+      const data: NotificationListOut = await res.json()
+      setItems(data.items)
+      console.log(data.items)
+      const init: Record<number, FeedbackValue> = {}
+      data.items.forEach(item => { init[item.notification_id] = item.feedback })
+      setFeedbacks(init)
+    } catch {
+      setError('공지를 불러오는 데 실패했어요. 잠시 후 다시 시도해 주세요.')
+    } finally {
       setLoading(false)
-      return
     }
-    listMyNotifications(uid)
-      .then(r => setItems(r.items.map(adapt)))
-      .catch(e => setError(e instanceof Error ? e.message : '불러오기 실패'))
-      .finally(() => setLoading(false))
   }, [])
 
-  async function handleFeedback(item: Notice, type: 'like' | 'dislike') {
-    const newValue: Feedback = item.feedback === type ? null : type
-    // optimistic
-    setItems(prev =>
-      prev.map(n => (n.notification_id === item.notification_id ? { ...n, feedback: newValue } : n)),
-    )
+  useEffect(() => {
+    if (!isLoggedIn()) { router.replace('/login'); return }
+    const uid = getUserId()
+    if (!uid) { router.replace('/login'); return }
+    fetchNotices(uid, hours)
+  }, [hours, router, fetchNotices])
+
+  async function handleFeedback(notificationId: number, type: FeedbackValue) {
+    const prev = feedbacks[notificationId]
+    const next: FeedbackValue = prev === type ? null : type
+    setFeedbacks(f => ({ ...f, [notificationId]: next }))
     try {
-      await apiSetFeedback(item.notification_id, newValue)
-    } catch (e) {
-      // 롤백
-      setItems(prev =>
-        prev.map(n => (n.notification_id === item.notification_id ? { ...n, feedback: item.feedback } : n)),
-      )
-      setError(e instanceof Error ? e.message : '피드백 저장 실패')
+      await fetch(`/api/notifications/${notificationId}/feedback`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ feedback: next }),
+      })
+    } catch {
+      setFeedbacks(f => ({ ...f, [notificationId]: prev }))
     }
   }
 
-  function daysLeft(deadline: string) {
-    const diff = Math.ceil((new Date(deadline).getTime() - Date.now()) / 86400000)
-    if (diff < 0) return { label: '마감', color: 'text-zinc-400 bg-zinc-100' }
-    if (diff === 0) return { label: 'D-Day', color: 'text-red-600 bg-red-100' }
-    if (diff <= 3) return { label: `D-${diff}`, color: 'text-red-600 bg-red-100' }
-    if (diff <= 7) return { label: `D-${diff}`, color: 'text-orange-600 bg-orange-100' }
-    return { label: `D-${diff}`, color: 'text-zinc-500 bg-zinc-100' }
-  }
+  const hoursLabel = HOURS_OPTIONS.find(o => o.value === hours)?.label ?? ''
 
   return (
     <div>
-      <div className="mb-8 flex items-end justify-between">
+      {/* Header */}
+      <div className="mb-6 flex items-end justify-between">
         <div>
           <p className="mb-1 text-xs font-bold uppercase tracking-widest text-indigo-400">AI 피드</p>
           <h1 className="text-3xl font-extrabold text-zinc-900">공지 알림</h1>
           <p className="mt-1 text-sm text-zinc-500">관심사 기반으로 선별된 공지예요</p>
         </div>
-        <span className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600">
-          {items.length}건
-        </span>
+        {!loading && !error && (
+          <span className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1 text-xs font-semibold text-indigo-600">
+            {items.length}건
+          </span>
+        )}
       </div>
 
-      {needsLogin ? (
-        <p className="rounded-2xl border border-amber-100 bg-amber-50 p-6 text-center text-sm text-amber-800">
-          회원가입과 관심사 등록을 먼저 완료해주세요.
-        </p>
-      ) : loading ? (
-        <p className="text-center text-sm text-zinc-400">불러오는 중...</p>
-      ) : error ? (
-        <p className="rounded-2xl border border-red-100 bg-red-50 p-6 text-center text-sm text-red-700">
-          {error}
-        </p>
-      ) : items.length === 0 ? (
-        <p className="rounded-2xl border border-dashed border-zinc-200 bg-white p-10 text-center text-sm text-zinc-400">
-          아직 받은 알림이 없어요.<br />
-          크롤러가 새 공지를 가져오고 매칭하면 여기에 나타나요.
-        </p>
-      ) : (
+      {/* Hours filter */}
+      <div className="mb-6 flex gap-2">
+        {HOURS_OPTIONS.map(opt => (
+          <button
+            key={opt.value}
+            onClick={() => setHours(opt.value)}
+            className={`rounded-full px-4 py-1.5 text-sm font-semibold transition-all ${
+              hours === opt.value
+                ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-200'
+                : 'bg-zinc-100 text-zinc-500 hover:bg-indigo-50 hover:text-indigo-600'
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Loading skeleton */}
+      {loading && (
         <ul className="flex flex-col gap-4">
-          {items.map((notice, idx) => {
-            const fb = notice.feedback
-            const style = CATEGORY_STYLE[notice.category] ?? CATEGORY_STYLE['공지']
-            const dl = notice.deadline ? daysLeft(notice.deadline) : null
+          {[...Array(3)].map((_, i) => (
+            <li key={i} className="overflow-hidden rounded-2xl border border-zinc-100 bg-white shadow-sm">
+              <div className="h-1 w-full animate-pulse bg-zinc-100" />
+              <div className="flex flex-col gap-3 p-5">
+                <div className="flex gap-2">
+                  <div className="h-5 w-16 animate-pulse rounded-full bg-zinc-100" />
+                </div>
+                <div className="h-5 w-3/4 animate-pulse rounded bg-zinc-100" />
+                <div className="h-4 w-full animate-pulse rounded bg-zinc-50" />
+                <div className="h-4 w-2/3 animate-pulse rounded bg-zinc-50" />
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* Error */}
+      {!loading && error && (
+        <div className="rounded-2xl border border-red-100 bg-red-50 px-6 py-8 text-center">
+          <p className="text-sm font-medium text-red-600">{error}</p>
+          <button
+            onClick={() => { const uid = getUserId(); if (uid) fetchNotices(uid, hours) }}
+            className="mt-4 rounded-xl bg-red-500 px-5 py-2 text-sm font-bold text-white hover:opacity-90 transition-opacity"
+          >
+            다시 시도
+          </button>
+        </div>
+      )}
+
+      {/* Empty */}
+      {!loading && !error && items.length === 0 && (
+        <div className="rounded-2xl border border-zinc-100 bg-zinc-50 px-6 py-12 text-center">
+          <p className="text-2xl">📭</p>
+          <p className="mt-3 text-sm font-medium text-zinc-500">
+            최근 {hoursLabel} 동안 새 공지가 없어요
+          </p>
+        </div>
+      )}
+
+      {/* Notice list */}
+      {!loading && !error && items.length > 0 && (
+        <ul className="flex flex-col gap-4">
+          {items.map((item, idx) => {
+            const fb = feedbacks[item.notification_id]
+            const style = getSourceStyle(item.source_id)
+            const dateLabel = formatPostedAt(item.posted_at)
+
             return (
               <motion.li
-                key={notice.notification_id}
+                key={item.notification_id}
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: idx * 0.07, duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
                 className="overflow-hidden rounded-2xl border border-zinc-100 bg-white shadow-sm shadow-zinc-100 hover:shadow-md hover:shadow-indigo-100/50 transition-shadow"
               >
                 <div className={`h-1 w-full ${style.bar}`} />
-
                 <div className="p-5">
-                  <div className="mb-3 flex items-center gap-2 flex-wrap">
+                  {/* Meta row */}
+                  <div className="mb-3 flex flex-wrap items-center gap-2">
                     <span className="text-base">{style.icon}</span>
                     <span className={`rounded-full border px-2.5 py-0.5 text-xs font-semibold ${style.badge}`}>
-                      {notice.category}
+                      {style.label}
                     </span>
-                    {dl && (
-                      <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${dl.color}`}>
-                        {dl.label}
-                      </span>
-                    )}
-                    {notice.deadline && (
-                      <span className="ml-auto text-xs text-zinc-400">~ {notice.deadline}</span>
+                    {dateLabel && (
+                      <span className="ml-auto text-xs text-zinc-400">{dateLabel}</span>
                     )}
                   </div>
 
+                  {/* Title */}
                   <a
-                    href={notice.url}
+                    href={item.url}
                     target="_blank"
-                    rel="noreferrer"
+                    rel="noopener noreferrer"
                     className="block text-base font-bold leading-snug text-zinc-900 hover:text-indigo-600 transition-colors"
                   >
-                    {notice.title}
+                    {item.title}
                   </a>
 
-                  <p className="mt-2 text-sm leading-relaxed text-zinc-500">{notice.summary}</p>
+                  {/* Summary */}
+                  <p className="mt-2 text-sm leading-relaxed text-zinc-500">{item.summary}</p>
 
+                  {/* Feedback */}
                   <div className="mt-4 flex items-center gap-2 border-t border-zinc-50 pt-4">
                     <span className="text-xs text-zinc-400">도움이 됐나요?</span>
                     <div className="ml-auto flex gap-2">
                       <motion.button
                         whileTap={{ scale: 0.9 }}
-                        onClick={() => handleFeedback(notice, 'like')}
+                        onClick={() => handleFeedback(item.notification_id, 'like')}
                         className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-sm font-medium transition-all ${
                           fb === 'like'
                             ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-200'
@@ -182,7 +249,7 @@ export default function FeedPage() {
                       </motion.button>
                       <motion.button
                         whileTap={{ scale: 0.9 }}
-                        onClick={() => handleFeedback(notice, 'dislike')}
+                        onClick={() => handleFeedback(item.notification_id, 'dislike')}
                         className={`flex items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-sm font-medium transition-all ${
                           fb === 'dislike'
                             ? 'bg-red-500 text-white shadow-sm shadow-red-200'

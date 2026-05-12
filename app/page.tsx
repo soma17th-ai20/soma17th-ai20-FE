@@ -60,7 +60,7 @@ export default function Home() {
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
-                href="/signup"
+                href="/login"
                 className="rounded-xl bg-white px-6 py-3 text-sm font-bold text-indigo-600 shadow-md shadow-indigo-900/20 transition-all hover:bg-indigo-50 hover:shadow-lg active:scale-95"
               >
                 지금 시작하기 →

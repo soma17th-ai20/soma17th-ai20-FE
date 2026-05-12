@@ -2,10 +2,10 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
-import { clearSession, getEmail, getUserId } from '../_lib/api'
+import { useState, useEffect } from 'react'
+import { isLoggedIn, getUser, logout, type User } from '../_lib/auth'
 
-const links = [
+const NAV_LINKS = [
   { href: '/feed', label: '공지 피드' },
   { href: '/keywords', label: '키워드' },
   { href: '/settings', label: '알림 설정' },
@@ -14,18 +14,16 @@ const links = [
 export default function Navbar() {
   const pathname = usePathname()
   const router = useRouter()
-  // null = 아직 hydration 전 (서버/첫 클라이언트 렌더 일치를 위해)
-  const [session, setSession] = useState<{ email: string } | null | undefined>(undefined)
+  const [loggedIn, setLoggedIn] = useState(false)
+  const [user, setUser] = useState<User | null>(null)
 
   useEffect(() => {
-    const uid = getUserId()
-    const email = getEmail()
-    setSession(uid && email ? { email } : null)
+    setLoggedIn(isLoggedIn())
+    setUser(getUser())
   }, [pathname])
 
   function handleLogout() {
-    clearSession()
-    setSession(null)
+    logout()
     router.push('/')
   }
 
@@ -42,7 +40,7 @@ export default function Navbar() {
         </Link>
 
         <nav className="flex items-center gap-1">
-          {links.map(({ href, label }) => {
+          {loggedIn && NAV_LINKS.map(({ href, label }) => {
             const active = pathname === href
             return (
               <Link
@@ -59,39 +57,25 @@ export default function Navbar() {
             )
           })}
 
-          {session === undefined ? (
-            // hydration 전: 자리만 차지
-            <span className="ml-2 h-7 w-20" />
-          ) : session ? (
+          {loggedIn ? (
             <div className="ml-2 flex items-center gap-2">
-              <span
-                title={session.email}
-                className="hidden max-w-[180px] truncate rounded-lg bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-600 sm:inline"
-              >
-                {session.email}
+              <span className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-700">
+                {user?.name}
               </span>
               <button
                 onClick={handleLogout}
-                className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-600 hover:border-red-200 hover:bg-red-50 hover:text-red-600 transition-all"
+                className="rounded-lg px-3.5 py-1.5 text-sm font-medium text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800 transition-all duration-150"
               >
                 로그아웃
               </button>
             </div>
           ) : (
-            <div className="ml-2 flex items-center gap-1">
-              <Link
-                href="/login"
-                className="rounded-lg px-3.5 py-1.5 text-sm font-medium text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800 transition-all"
-              >
-                로그인
-              </Link>
-              <Link
-                href="/signup"
-                className="rounded-lg bg-gradient-to-r from-indigo-600 to-violet-500 px-4 py-1.5 text-sm font-semibold text-white shadow-sm shadow-indigo-200 hover:opacity-90 transition-opacity"
-              >
-                시작하기
-              </Link>
-            </div>
+            <Link
+              href="/login"
+              className="ml-2 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-500 px-4 py-1.5 text-sm font-semibold text-white shadow-sm shadow-indigo-200 hover:opacity-90 transition-opacity"
+            >
+              로그인
+            </Link>
           )}
         </nav>
       </div>

@@ -1,8 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { getEmail, getSettings, getUserId, updateSettings, type Frequency } from '../_lib/api'
+import { useRouter } from 'next/navigation'
+import { isLoggedIn, isOnboarded, setOnboarded } from '../_lib/auth'
+
+type Frequency = 'realtime' | 'daily' | 'weekly'
 
 const FREQUENCIES: { value: Frequency; label: string; desc: string; icon: string; gradient: string }[] = [
   { value: 'realtime', label: '실시간', desc: '공지가 올라오는 즉시 알림', icon: '⚡', gradient: 'from-amber-400 to-orange-400' },
@@ -11,6 +14,7 @@ const FREQUENCIES: { value: Frequency; label: string; desc: string; icon: string
 ]
 
 export default function SettingsPage() {
+  const router = useRouter()
   const [email, setEmail] = useState('')
   const [frequency, setFrequency] = useState<Frequency>('daily')
   const [saved, setSaved] = useState(false)
@@ -34,6 +38,10 @@ export default function SettingsPage() {
       .catch(e => setError(e instanceof Error ? e.message : '설정 로드 실패'))
   }, [])
 
+  useEffect(() => {
+    if (!isLoggedIn()) router.replace('/login')
+  }, [router])
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (userId == null) {
@@ -42,19 +50,15 @@ export default function SettingsPage() {
     }
     setLoading(true)
     setSaved(false)
-    setError(null)
-    try {
-      const updated = await updateSettings(userId, {
-        email,
-        notification_frequency: frequency,
-      })
-      setEmail(updated.email)
-      setFrequency(updated.notification_frequency)
-      setSaved(true)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : '저장 실패')
-    } finally {
-      setLoading(false)
+    await new Promise(r => setTimeout(r, 500))
+    // TODO: PATCH /api/users/notification-settings
+    const firstTime = !isOnboarded()
+    setOnboarded()
+    setSaved(true)
+    setLoading(false)
+    if (firstTime) {
+      await new Promise(r => setTimeout(r, 800))
+      router.push('/feed')
     }
   }
 

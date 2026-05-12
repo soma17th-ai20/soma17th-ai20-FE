@@ -1,8 +1,10 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useRouter } from 'next/navigation'
+import { setPendingSignup, isLoggedIn } from '../_lib/auth'
 
 type StepId = 'name' | 'email' | 'department' | 'grade'
 
@@ -47,6 +49,13 @@ export default function SignupPage() {
   const currentStepId = STEP_ORDER[stepIndex]
 
   useEffect(() => {
+    if (isLoggedIn()) {
+      router.replace('/feed')
+      return
+    }
+  }, [router])
+
+  useEffect(() => {
     if (currentStepId === 'name' || currentStepId === 'email') {
       const t = setTimeout(() => inputRef.current?.focus(), 480)
       return () => clearTimeout(t)
@@ -58,8 +67,8 @@ export default function SignupPage() {
     setValues(updated)
     setTempInput('')
     if (stepIndex + 1 >= STEP_ORDER.length) {
-      localStorage.setItem('signup', JSON.stringify(updated))
-      router.push('/interests')
+      setPendingSignup({ name: updated.name, email: updated.email, department: updated.department, grade: updated.grade })
+      router.push('/interests?signup=true')
     } else {
       setStepIndex(prev => prev + 1)
     }
@@ -238,6 +247,12 @@ export default function SignupPage() {
       {/* Hint */}
       <p className="mt-4 text-center text-xs text-zinc-400">
         가입 후 관심사를 선택하면 맞춤 알림을 받을 수 있어요
+      </p>
+      <p className="mt-2 text-center text-sm text-zinc-500">
+        이미 계정이 있으신가요?{' '}
+        <Link href="/login" className="font-semibold text-indigo-600 hover:underline">
+          로그인
+        </Link>
       </p>
     </div>
   )

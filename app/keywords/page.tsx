@@ -1,8 +1,9 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { addInterest, getUserId, listInterests, removeInterest } from '../_lib/api'
+import { useRouter } from 'next/navigation'
+import { isLoggedIn, getUserId } from '../_lib/auth'
 
 const SUGGESTIONS = ['등록금', '수강신청', '현장실습', '교환학생', '복학', '휴학', '취업특강', '공모전', '봉사활동', '기숙사']
 
@@ -16,23 +17,27 @@ const KEYWORD_COLORS = [
 ]
 
 export default function KeywordsPage() {
+  const router = useRouter()
   const [keywords, setKeywords] = useState<string[]>([])
   const [input, setInput] = useState('')
   const [error, setError] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [userId, setUserId] = useState<number | null>(null)
+  const [fetching, setFetching] = useState(true)
+  const [pending, setPending] = useState<Set<string>>(new Set())
 
   useEffect(() => {
+    if (!isLoggedIn()) { router.replace('/login'); return }
     const uid = getUserId()
-    setUserId(uid)
-    if (uid == null) {
-      setError('회원가입을 먼저 완료해주세요.')
-      return
-    }
-    listInterests(uid)
-      .then(r => setKeywords(r.interests))
-      .catch(e => setError(e instanceof Error ? e.message : '불러오기 실패'))
-  }, [])
+    if (!uid) return
+    fetch(`/api/users/${uid}/interests`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.interests && Array.isArray(data.interests)) {
+          setKeywords(data.interests)
+        }
+      })
+      .catch(() => {})
+      .finally(() => setFetching(false))
+  }, [router])
 
   async function addKeyword(kw?: string) {
     const trimmed = (kw ?? input).trim()
@@ -40,30 +45,42 @@ export default function KeywordsPage() {
     if (userId == null) { setError('회원가입을 먼저 완료해주세요.'); return }
     if (keywords.includes(trimmed)) { setError('이미 추가된 키워드예요'); return }
     if (keywords.length >= 20) { setError('최대 20개까지 추가할 수 있어요'); return }
-    setLoading(true)
+    if (pending.has(trimmed)) return
+
+    const uid = getUserId()
+    if (!uid) return
+    setPending(prev => new Set([...prev, trimmed]))
     setError('')
     try {
-      const r = await addInterest(userId, trimmed)
-      if (!r.duplicate) setKeywords(prev => [...prev, trimmed])
+      const res = await fetch(`/api/users/${uid}/interests`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ interest_text: trimmed }),
+      })
+      if (!res.ok) throw new Error('키워드 추가에 실패했어요.')
+      setKeywords(prev => [...prev, trimmed])
       setInput('')
     } catch (e) {
-      setError(e instanceof Error ? e.message : '추가 실패')
+      setError(e instanceof Error ? e.message : '오류가 발생했어요.')
     } finally {
-      setLoading(false)
+      setPending(prev => { const n = new Set(prev); n.delete(trimmed); return n })
     }
   }
 
   async function removeKeyword(kw: string) {
-    if (userId == null || loading) return
-    setLoading(true)
+    if (pending.has(kw)) return
+    const uid = getUserId()
+    if (!uid) return
+    setPending(prev => new Set([...prev, kw]))
     setError('')
     try {
-      await removeInterest(userId, kw)
+      const res = await fetch(`/api/users/${uid}/interests/${encodeURIComponent(kw)}`, { method: 'DELETE' })
+      if (!res.ok) throw new Error('키워드 삭제에 실패했어요.')
       setKeywords(prev => prev.filter(k => k !== kw))
     } catch (e) {
-      setError(e instanceof Error ? e.message : '삭제 실패')
+      setError(e instanceof Error ? e.message : '오류가 발생했어요.')
     } finally {
-      setLoading(false)
+      setPending(prev => { const n = new Set(prev); n.delete(kw); return n })
     }
   }
 
@@ -94,10 +111,11 @@ export default function KeywordsPage() {
             />
             <motion.button
               onClick={() => addKeyword()}
+              disabled={!input.trim() || pending.has(input.trim())}
               whileTap={{ scale: 0.94 }}
-              className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 px-5 py-2.5 text-sm font-bold text-white shadow-sm shadow-indigo-200 hover:opacity-90 transition-opacity"
+              className="rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 px-5 py-2.5 text-sm font-bold text-white shadow-sm shadow-indigo-200 hover:opacity-90 transition-opacity disabled:opacity-40"
             >
-              추가
+              {pending.has(input.trim()) ? '⋯' : '추가'}
             </motion.button>
           </div>
           <AnimatePresence>
@@ -121,9 +139,10 @@ export default function KeywordsPage() {
                 <button
                   key={ex}
                   onClick={() => addKeyword(ex)}
-                  className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-500 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 transition-all"
+                  disabled={pending.has(ex)}
+                  className="rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-medium text-zinc-500 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-600 transition-all disabled:opacity-40"
                 >
-                  + {ex}
+                  {pending.has(ex) ? '⋯' : `+ ${ex}`}
                 </button>
               ))}
             </div>
@@ -143,7 +162,11 @@ export default function KeywordsPage() {
           <p className="text-xs text-zinc-400">최대 20개</p>
         </div>
 
-        {keywords.length === 0 ? (
+        {fetching ? (
+          <div className="rounded-2xl border border-zinc-100 bg-white py-14 text-center">
+            <p className="text-sm text-zinc-400">불러오는 중...</p>
+          </div>
+        ) : keywords.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-zinc-200 bg-white py-14 text-center">
             <p className="text-2xl">🔍</p>
             <p className="mt-2 text-sm font-medium text-zinc-400">키워드를 추가해 보세요</p>
@@ -170,10 +193,11 @@ export default function KeywordsPage() {
                     <span className="text-sm font-semibold text-zinc-700">{kw}</span>
                     <button
                       onClick={() => removeKeyword(kw)}
+                      disabled={pending.has(kw)}
                       aria-label={`${kw} 삭제`}
-                      className="ml-1 flex h-4 w-4 items-center justify-center rounded-full text-zinc-300 hover:bg-red-100 hover:text-red-500 transition-colors text-xs"
+                      className="ml-1 flex h-4 w-4 items-center justify-center rounded-full text-zinc-300 hover:bg-red-100 hover:text-red-500 transition-colors text-xs disabled:opacity-40"
                     >
-                      ×
+                      {pending.has(kw) ? '⋯' : '×'}
                     </button>
                   </motion.li>
                 )
