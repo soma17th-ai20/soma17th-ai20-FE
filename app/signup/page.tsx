@@ -6,11 +6,12 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { useRouter } from 'next/navigation'
 import { setPendingSignup, isLoggedIn } from '../_lib/auth'
 
-type StepId = 'name' | 'email' | 'department' | 'grade'
+type StepId = 'name' | 'email' | 'password' | 'department' | 'grade'
 
 interface FormValues {
   name: string
   email: string
+  password: string
   department: string
   grade: string
 }
@@ -25,6 +26,7 @@ const GRADES = ['1학년', '2학년', '3학년', '4학년']
 const STEP_LABELS: Record<StepId, string> = {
   name: '이름',
   email: '이메일',
+  password: '비밀번호',
   department: '학과',
   grade: '학년',
 }
@@ -32,18 +34,21 @@ const STEP_LABELS: Record<StepId, string> = {
 const STEP_QUESTIONS: Record<StepId, string> = {
   name: '이름이 무엇인가요?',
   email: '학교 이메일을 알려주세요',
+  password: '비밀번호를 설정해주세요',
   department: '어떤 학과인가요?',
   grade: '몇 학년인가요?',
 }
 
-const STEP_ORDER: StepId[] = ['name', 'email', 'department', 'grade']
+const STEP_ORDER: StepId[] = ['name', 'email', 'password', 'department', 'grade']
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const ease = [0.22, 1, 0.36, 1] as const
 
 export default function SignupPage() {
   const router = useRouter()
   const [stepIndex, setStepIndex] = useState(0)
-  const [values, setValues] = useState<FormValues>({ name: '', email: '', department: '', grade: '' })
+  const [values, setValues] = useState<FormValues>({ name: '', email: '', password: '', department: '', grade: '' })
   const [tempInput, setTempInput] = useState('')
+  const [error, setError] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
   const currentStepId = STEP_ORDER[stepIndex]
@@ -51,23 +56,50 @@ export default function SignupPage() {
   useEffect(() => {
     if (isLoggedIn()) {
       router.replace('/feed')
-      return
     }
   }, [router])
 
   useEffect(() => {
-    if (currentStepId === 'name' || currentStepId === 'email') {
+    const isTextField = currentStepId === 'name' || currentStepId === 'email' || currentStepId === 'password'
+    if (isTextField) {
       const t = setTimeout(() => inputRef.current?.focus(), 480)
       return () => clearTimeout(t)
     }
+    setError('')
   }, [currentStepId])
+
+  function goToStep(idx: number) {
+    const stepId = STEP_ORDER[idx]
+    setError('')
+    setStepIndex(idx)
+    const isTextField = stepId === 'name' || stepId === 'email' || stepId === 'password'
+    setTempInput(isTextField ? values[stepId] : '')
+  }
+
+  function validate(): boolean {
+    if (!tempInput.trim()) return false
+    if (currentStepId === 'email') {
+      if (!EMAIL_REGEX.test(tempInput.trim())) {
+        setError('올바른 이메일 형식으로 입력해주세요 (예: example@khu.ac.kr)')
+        return false
+      }
+    }
+    if (currentStepId === 'password') {
+      if (tempInput.length < 8) {
+        setError('비밀번호는 8자 이상이어야 해요')
+        return false
+      }
+    }
+    return true
+  }
 
   function advance(stepId: StepId, value: string) {
     const updated = { ...values, [stepId]: value }
     setValues(updated)
     setTempInput('')
+    setError('')
     if (stepIndex + 1 >= STEP_ORDER.length) {
-      setPendingSignup({ name: updated.name, email: updated.email, department: updated.department, grade: updated.grade })
+      setPendingSignup(updated)
       router.push('/interests?signup=true')
     } else {
       setStepIndex(prev => prev + 1)
@@ -75,15 +107,12 @@ export default function SignupPage() {
   }
 
   function handleTextNext() {
-    if (!tempInput.trim()) return
+    if (!validate()) return
     advance(currentStepId, tempInput.trim())
   }
 
-  const progress = Math.round((stepIndex / STEP_ORDER.length) * 100)
-
   return (
     <div className="mx-auto max-w-lg">
-      {/* Card container */}
       <div className="overflow-hidden rounded-3xl border border-indigo-100 bg-white/80 shadow-xl shadow-indigo-100/50 backdrop-blur-sm">
 
         {/* Gradient header */}
@@ -117,7 +146,6 @@ export default function SignupPage() {
 
         {/* Form body */}
         <div className="px-8 py-7">
-          {/* Completed steps */}
           <div className="flex flex-col">
             {STEP_ORDER.slice(0, stepIndex + 1).map((stepId, idx) => {
               const isActive = idx === stepIndex
@@ -135,17 +163,39 @@ export default function SignupPage() {
                         exit={{ opacity: 0, y: -20, transition: { duration: 0.18 } }}
                         className="py-2"
                       >
-                        {(stepId === 'name' || stepId === 'email') && (
-                          <div className="flex flex-col gap-5">
-                            <input
-                              ref={inputRef}
-                              type={stepId === 'email' ? 'email' : 'text'}
-                              placeholder={stepId === 'name' ? '홍길동' : 'example@khu.ac.kr'}
-                              value={tempInput}
-                              onChange={e => setTempInput(e.target.value)}
-                              onKeyDown={e => e.key === 'Enter' && handleTextNext()}
-                              className="border-b-2 border-indigo-100 bg-transparent pb-2 text-2xl font-medium text-zinc-900 placeholder:text-zinc-200 focus:border-indigo-500 focus:outline-none transition-colors duration-200"
-                            />
+                        {(stepId === 'name' || stepId === 'email' || stepId === 'password') && (
+                          <div className="flex flex-col gap-4">
+                            <div className="flex flex-col gap-1.5">
+                              <input
+                                ref={inputRef}
+                                type={
+                                  stepId === 'email' ? 'email' :
+                                  stepId === 'password' ? 'password' :
+                                  'text'
+                                }
+                                placeholder={
+                                  stepId === 'name' ? '홍길동' :
+                                  stepId === 'email' ? 'example@khu.ac.kr' :
+                                  '비밀번호를 8자 이상 입력해주세요'
+                                }
+                                value={tempInput}
+                                onChange={e => { setTempInput(e.target.value); setError('') }}
+                                onKeyDown={e => e.key === 'Enter' && handleTextNext()}
+                                className="border-b-2 border-indigo-100 bg-transparent pb-2 text-2xl font-medium text-zinc-900 placeholder:text-zinc-200 focus:border-indigo-500 focus:outline-none transition-colors duration-200"
+                              />
+                              <AnimatePresence>
+                                {error && (
+                                  <motion.p
+                                    initial={{ opacity: 0, y: -4 }}
+                                    animate={{ opacity: 1, y: 0 }}
+                                    exit={{ opacity: 0 }}
+                                    className="text-xs font-medium text-red-500"
+                                  >
+                                    {error}
+                                  </motion.p>
+                                )}
+                              </AnimatePresence>
+                            </div>
                             <AnimatePresence>
                               {tempInput.trim() && (
                                 <motion.button
@@ -213,18 +263,24 @@ export default function SignupPage() {
                         )}
                       </motion.div>
                     ) : (
-                      <motion.div
+                      <motion.button
                         key="done"
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         transition={{ duration: 0.25 }}
-                        className="flex items-center justify-between border-b border-zinc-100 py-3.5"
+                        onClick={() => goToStep(idx)}
+                        className="w-full flex items-center justify-between border-b border-zinc-100 py-3.5 -mx-2 px-2 rounded-lg hover:bg-zinc-50 transition-colors group text-left"
                       >
                         <span className="text-xs font-medium uppercase tracking-wider text-zinc-400">
                           {STEP_LABELS[stepId]}
                         </span>
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-zinc-700">{values[stepId]}</span>
+                          <span className="text-sm font-semibold text-zinc-700">
+                            {stepId === 'password' ? '••••••••' : values[stepId]}
+                          </span>
+                          <span className="text-[10px] text-zinc-300 group-hover:text-indigo-400 transition-colors">
+                            수정
+                          </span>
                           <motion.span
                             initial={{ scale: 0 }}
                             animate={{ scale: 1 }}
@@ -234,7 +290,7 @@ export default function SignupPage() {
                             ✓
                           </motion.span>
                         </div>
-                      </motion.div>
+                      </motion.button>
                     )}
                   </AnimatePresence>
                 </motion.div>
@@ -244,7 +300,6 @@ export default function SignupPage() {
         </div>
       </div>
 
-      {/* Hint */}
       <p className="mt-4 text-center text-xs text-zinc-400">
         가입 후 관심사를 선택하면 맞춤 알림을 받을 수 있어요
       </p>

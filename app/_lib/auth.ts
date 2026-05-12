@@ -8,6 +8,7 @@ export type User = {
 export type PendingSignup = {
   name: string
   email: string
+  password: string
   department: string
   grade: string
 }
